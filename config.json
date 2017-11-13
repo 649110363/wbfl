@@ -1,0 +1,6 @@
+{
+	"rename_align":2,
+	"driver_train_rate":0.5,
+	"fetch_rate":0.1,
+	"min_words_num":10
+}
