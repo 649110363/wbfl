@@ -127,11 +127,11 @@ import pickle
 '''
 
 NEED_WD = {	"n":"名词",
-			# "nr":"人名",
+			"nr":"人名",
 			# "nr1":"汉语姓氏",
 			# "nr2":"汉语名字",
 			# "nrj":"日语人名",
-			# "nrf":"音译人名",
+			"nrf":"音译人名",
 			"ns":"地名",
 			"nsf":"音译地名",
 			"nt":"机构团体名",
@@ -144,6 +144,8 @@ NEED_WD_SET = set()
 # 停止词集合
 STOPWD_SET = set()
 
+SP_WORD_DICT = {"nr":"张三", "nrf":"汤姆", "ns":"北京", "nsf":"纽约"}
+SP_WORD_SET = set()
 
 def worddiv(mpath):
 	'''基础分词, 去除单字根据NEED_WD词性取词, 去除停用词
@@ -153,15 +155,32 @@ def worddiv(mpath):
 	target_txt = target_file.read()
 	target_file.close()
 	ret_list = []
+	# target_txt = target_txt.replace('\xa0', ' ').replace('\u3000', ' ').replace('\r', '')
 	# 使用简称词性
 	gen_str = pynlpir.segment(target_txt, pos_names=None)
 	for word in gen_str:
-		# 挑选所需的词性的词，去除单字
-		if len(word[0]) > 1 and word[1] in NEED_WD_SET:
-			if not word[0] in STOPWD_SET:
-				ret_list.append(word[0])
+		# 挑选所需的词性的词，去除单字, 0为单个分词, 1为该词词性
+		if len(word[0]) > 1 and word[1] in NEED_WD_SET and not word[0] in STOPWD_SET:
+			# 人名地名归一
+			if word[1] in SP_WORD_SET:
+				ret_list.append(SP_WORD_DICT[word[1]])
+			else:
+				tmp_str = word[0]
+				tmp_str = tmp_str.replace('\xa0', '').replace('\u3000', '').replace('\r', '')
+				if len(tmp_str) < 2:
+					break
+				# 数字开头去掉数字
+				if '0' <=  tmp_str[0] <= '9':
+					tmp_str = tmp_str.strip('1234567890.-')
+					if len(tmp_str) >= 2:
+						ret_list.append(tmp_str)
+				else:
+					ret_list.append(tmp_str)
 	return ret_list
 
+
+def wordfreq(rel_path, word_list):
+	pass
 		# if (word[1] in NEE_WD_SET and len(word[0]) > 3):
 		# 	if (word_dict.get(word[0]) == None):
 		# 		word_dict[word[0]] = [1, word[1]]
@@ -174,42 +193,60 @@ def worddiv(mpath):
 	# 	s = '%s\t%s\t%d\n' % (item[0], item[1][1], item[1][0])
 	# 	ret_str = ret_str + s
 
-
-def wordfreq(rel_path, word_list):
-	pass
-
 MIN_WORDS_NUM = 10
 def genwordpkl(target_path, rel_path, file_names, dir_names, **kwargs):
 	'''对每一个类汇总生成一个pkl文件，每一个文件的分词结果列表的汇总列表
 		kwargs中需要有 min_words_num 参数指定训练比例否则默认MIN_WORDS_NUM
+		生成二维分词list的pkl文件, 一个维度表示一个文件内的分词数, 一个度维表示文本数量
+		生成信息的分词二维信息pkl文件, 0,1表示采用的文本的文件名和分词数, 2,3同理未采用的
 	'''
+	if len(file_names) == 0:
+		return
 	origin_path = target_path + rel_path
 	pkl_path = target_path + '_pkl/'
-	words = list()
-	discard = ''
+	info_path = target_path + '_pkl_info/'
+	up_dir = rel_path.split('/')[-2]
+	words = []
+	target_list = [[], [], [], []]
 	min_words_num = kwargs.get('min_words_num')
 	if min_words_num is None:
 		min_words_num = MIN_WORDS_NUM
 	if not os.path.isdir(pkl_path):
 		os.mkdir(pkl_path)
+		os.mkdir(info_path)
 
 	for mfile in file_names:
 		word = worddiv(origin_path + mfile)
 		if len(word) < min_words_num:
-			discard += origin_path + mfile + '\t' + str(len(word)) + '\n'
+			# 文件名和分词出的数量
+			target_list[2].append(mfile)
+			target_list[3].append(str(len(word)))
 		else:
 			words.append(word)
-	if len(words):
-		# 写入舍弃的文本信息
-		f = open(pkl_path + 'ret.txt', 'w')
-		f.write(discard)
-		f.close()
-		# 写入分词list数据
-		pkl_path = pkl_path + rel_path.split('/')[-2] + '.pkl'
-		f = open(pkl_path, 'wb')
-		pickle.dump(words, f)
-		f.close()
+			target_list[0].append(mfile)
+			target_list[1].append(str(len(word)))
+	# 写入采用和舍弃的文本名和分词数
+	f = open(info_path + up_dir + '.pkl', 'wb')
+	pickle.dump(target_list, f)
+	f.close()
 
+	# 写入分词list数据
+	pkl_path = pkl_path + up_dir + '.pkl'
+	f = open(pkl_path, 'wb')
+	pickle.dump(words, f)
+	f.close()
+
+def pkl2text(file_path, splitter=','):
+	'''将一个二维字符list的*.pkl文件转成 csv文件, 即逗号和换行分隔
+	'''
+	dlist = pickle.load(open(file_path, 'rb'))
+	dstr = ''
+	for l in dlist:
+		dstr += splitter.join(l) + '\n'
+
+	csv_file = open(file_path[:file_path.rfind('.')]+'.csv', 'w', errors='ignore')
+	csv_file.write(dstr)
+	csv_file.close()
 
 STOPWORDSET_PATH = './stopwords.pkl'
 def genstopwordset(mpath):
@@ -240,11 +277,13 @@ def getstopwordset():
 def init():
 	'''初始化
 	'''
-	pynlpir.open()
-	global STOPWD_SET, NEED_WD_SET
+	# 繁体会导致编码错误?
+	pynlpir.open(encoding_errors='ignore')
+	# pynlpir.open()
+	global STOPWD_SET, NEED_WD_SET, SP_WORD_SET, SP_WORD_DICT
 	NEED_WD_SET = NEED_WD.keys()
 	STOPWD_SET = getstopwordset()
-
+	SP_WORD_SET = SP_WORD_DICT.keys()
 
 
 
@@ -261,4 +300,14 @@ if __name__ == "__main__":
 	# f.write(str(worddiv(path)))
 	# f.close()
 
-	catdiv.walker('./Data', (genwordpkl), min_words_num=10)
+	catdiv.walker('../Data_01_train/jk', (genwordpkl), min_words_num=10)
+	# pkl2text('../Data_01_test_pkl/yl.pkl', ',')
+	# print(worddiv('./tmp/sc_000258.txt'))
+	# print(worddiv('./tmp/sc_000258.txt'))
+
+	# d = worddiv('./tmp/sc_000258.txt')
+	# dstr = ' '.join(d)
+	# csv_file = open('./d.csv', 'w', encoding='utf8')
+	# csv_file.write(dstr)
+	# csv_file.close()
+	
